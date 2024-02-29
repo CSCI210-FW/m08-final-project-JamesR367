@@ -1,7 +1,7 @@
 /* Program name: Final Project
  *  Author: James Ramsey
  *  Date last updated: 3/1/2024
- * Purpose: Database for the smoothie shop Brad's smoothie palace
+ * Purpose: Database for the smoothie shop Brad's Smoothie Palace
  */
 
 #include "sqlite3.h"
