@@ -1,5 +1,5 @@
 all :  
-	g++ -pedantic-errors ./*.cpp -lsqlite3 -o main
+	g++ -pedantic-errors -g ./*.cpp -lsqlite3 -o main
 
 clean :
 	rm main

@@ -26,14 +26,24 @@ void insertAmount(sqlite3 *db, int amount, int id);
 void deleted(sqlite3 *db, int choice);
 void deleteDistributor(sqlite3 *db);
 void displayInv(sqlite3 *db);
-void viewFruit(sqlite3 *db, int choice);
+void viewMaterial(sqlite3 *db, int choice);
 void displaySmoothies(sqlite3 *db);
 void viewSmoothie(sqlite3 *db, int choice);
 void printSmoothiePages(sqlite3_stmt *res, int rowsPerPage, int startNum);
-std::string getFruit1(sqlite3 *db,int choice);
-std::string getFruit2(sqlite3 *db,int choice);
-std::string getLiquid(sqlite3 *db,int choice);
-
+std::string getFruit1(sqlite3 *db, int choice);
+std::string getFruit2(sqlite3 *db, int choice);
+std::string getLiquid(sqlite3 *db, int choice);
+int smoothieOrder(sqlite3 *db);
+int makeInvoice(sqlite3 *db, int empID);
+int startTransaction(sqlite3 *db);
+int rollback(sqlite3 *db);
+int commit(sqlite3 *db);
+int makeSmoothie(sqlite3 *db, int InvoiceID);
+int viewFruit(sqlite3 *db);
+int viewLiquid(sqlite3 *db);
+void makeSale(sqlite3 *db);
+int getPrice(sqlite3 *db, int item);
+void updateInvoice(sqlite3 *db,int quantity,int price, int row);
 
 int main()
 {
@@ -61,7 +71,7 @@ int main()
 			deleteDistributor(db);
 			break;
 		case 4:
-			// Add Transaction;
+			makeSale(db);
 			break;
 		case 5:
 			displayInv(db);
@@ -96,6 +106,7 @@ int mainMenu()
 	int choice = 0;
 
 	printMainMenu();
+
 	std::cin >> choice;
 	while ((!std::cin || choice < 1 || choice > 6) && choice != -1)
 	{
@@ -373,11 +384,11 @@ void updateEmployee(sqlite3 *db)
 		while (choice == 0 || choice == -1)
 		{
 			if (i == 0)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page):" << std::endl;
+				std::cout << "Please choose the employee you want to update (enter 0 to go to the next page):" << std::endl;
 			else if (i + rowsPerPage < totalRows)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the employee you want to update (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
 			else
-				std::cout << "Please choose the customer you want to see rentals for (enter -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the employee you want to update (enter -1 to go to the previous page):" << std::endl;
 			printPages(pRes, rowsPerPage, i);
 			std::cin >> choice;
 
@@ -621,11 +632,11 @@ void deleteDistributor(sqlite3 *db)
 		while (choice == 0 || choice == -1)
 		{
 			if (i == 0)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page):" << std::endl;
+				std::cout << "Please choose the distributor you want to delete (enter 0 to go to the next page):" << std::endl;
 			else if (i + rowsPerPage < totalRows)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the distributor you want to delete (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
 			else
-				std::cout << "Please choose the customer you want to see rentals for (enter -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the distributor you want to delete (enter -1 to go to the previous page):" << std::endl;
 			printPages(pRes, rowsPerPage, i);
 			std::cin >> choice;
 
@@ -711,7 +722,467 @@ void deleted(sqlite3 *db, int choice)
 
 #pragma endregion
 
-// transaction functions here
+#pragma region Transaction option
+
+void makeSale(sqlite3 *db)
+{
+
+	int choice, ID, totalPrice = 0,quantity=0,row;
+	bool isTrue = true;
+	int rc = startTransaction(db);
+	if (rc != SQLITE_OK)
+	{
+		std::cout << "unable to start transaction(42). " << sqlite3_errmsg(db) << std::endl;
+		return;
+	}
+
+	ID = smoothieOrder(db);
+	row = sqlite3_last_insert_rowid(db);
+	rc = commit(db);
+	rc = startTransaction(db);
+
+	do
+	{
+		totalPrice += makeSmoothie(db, ID);
+		if (totalPrice == -1)
+		{
+			rollback(db);
+			std::cout << "Error making invoice." << std::endl;
+			return;
+		}
+		std::cout << "Would you like to add another smoothie" << std::endl;
+		std::cout << "1. Yes" << std::endl;
+		std::cout << "2. No" << std::endl;
+		std::cin >> choice;
+		while ((choice > 2 && choice < 1) || !choice)
+		{
+			clearInput();
+			std::cout << "Invalid input" << std::endl;
+			std::cin >> choice;
+		}
+		switch (choice)
+		{
+		case 1:
+			isTrue = true;
+			break;
+		case 2:
+			isTrue = false;
+			break;
+		default:
+			break;
+		}
+		quantity ++;
+	} while (isTrue == true);
+	updateInvoice(db,quantity,totalPrice,row);
+	rc = commit(db);
+
+
+	
+}
+
+int smoothieOrder(sqlite3 *db)
+{
+	int ID;
+	std::string empID;
+	std::string query2 = "SELECT Employee_id, Employee_Fname, Employee_Lname, Employee_pay FROM Employee ";
+	sqlite3_stmt *pRes2;
+	std::string m_strLastError;
+	int pay;
+	int i = 0, choice = 0, rowsPerPage, totalRows;
+
+	if (sqlite3_prepare_v2(db, query2.c_str(), -1, &pRes2, NULL) != SQLITE_OK)
+	{
+		m_strLastError = sqlite3_errmsg(db);
+		sqlite3_finalize(pRes2);
+		std::cout << "There was an error: " << m_strLastError << std::endl;
+		return 0;
+	}
+	else
+	{
+		int columnCount = sqlite3_column_count(pRes2);
+
+		std::cout << std::left;
+		int res;
+		do
+		{
+			res = sqlite3_step(pRes2);
+			i++;
+
+		} while (res == SQLITE_ROW);
+		totalRows = i - 1;
+		sqlite3_reset(pRes2);
+		std::cout << "There are " << i - 1 << " rows in the result.  How many do you want to see per page?" << std::endl;
+		std::cin >> rowsPerPage;
+		while (!std::cin || rowsPerPage < 0)
+		{
+			if (!std::cin)
+			{
+				std::cin.clear();
+				std::cin.ignore(INT_MAX, '\n');
+			}
+			std::cout << "That is not a valid choice! Try again!" << std::endl;
+			std::cout << "There are " << i << " rows in the result.  How many do you want to see per page?" << std::endl;
+		}
+		if (rowsPerPage > i)
+			rowsPerPage = i;
+		i = 0;
+
+		while (choice == 0 || choice == -1)
+		{
+			if (i == 0)
+				std::cout << "Please choose the employee who helped you (enter 0 to go to the next page):" << std::endl;
+			else if (i + rowsPerPage < totalRows)
+				std::cout << "Please choose the employee who helped you (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
+			else
+				std::cout << "Please choose the employee who helped you (enter -1 to go to the previous page):" << std::endl;
+			printPages(pRes2, rowsPerPage, i);
+			std::cin >> choice;
+
+			while (!(std::cin) || choice < -1 || choice > totalRows)
+			{
+				if (!std::cin)
+				{
+					std::cin.clear();
+					std::cin.ignore(INT_MAX, '\n');
+				}
+				std::cout << "That is not a valid choice! Try again!" << std::endl;
+				std::cin >> choice;
+			}
+			if (choice == 0)
+			{
+				i = i + rowsPerPage;
+
+				if (i >= totalRows)
+				{
+					i = totalRows - rowsPerPage;
+					sqlite3_reset(pRes2);
+					for (int j = 0; j < i; j++)
+					{
+						sqlite3_step(pRes2);
+					}
+				}
+			}
+			else if (choice == -1)
+			{
+				i = i - rowsPerPage;
+				if (i < 0)
+					i = 0;
+				sqlite3_reset(pRes2);
+				for (int j = 0; j < i; j++)
+					sqlite3_step(pRes2);
+			}
+		}
+		sqlite3_reset(pRes2);
+		for (int i = 0; i < choice; i++)
+		{
+			sqlite3_step(pRes2);
+		}
+		empID = reinterpret_cast<const char *>(sqlite3_column_text(pRes2, 0));
+		ID = makeInvoice(db, std::stoi(empID));
+	}
+	return ID;
+}
+
+int makeInvoice(sqlite3 *db, int empID)
+{
+	int ID;
+	char formatDate[80];
+	time_t currentDate = time(NULL);
+	strftime(formatDate, 80, "%F %T", localtime(&currentDate));
+	sqlite3_stmt *pRes;
+	std::string invDate(formatDate);
+	std::string query = "INSERT INTO Invoice(Employee_id,Invoice_date) ";
+	query += "Values(@Emp_id,@date)";
+
+	int rc = sqlite3_prepare_v2(db, query.c_str(), -1, &pRes, NULL);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(pRes);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_text(pRes, sqlite3_bind_parameter_index(pRes, "@date"), invDate.c_str(), -1, SQLITE_STATIC);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(pRes);
+		std::cout << "unable to insert First name." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(pRes, sqlite3_bind_parameter_index(pRes, "@Emp_id"), empID);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(pRes);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	sqlite3_step(pRes);
+	ID = sqlite3_last_insert_rowid(db);
+	sqlite3_finalize(pRes);
+	return ID;
+}
+
+void updateInvoice(sqlite3 *db,int quantity,int price, int row)
+{
+	sqlite3_stmt *res;
+	std::string query = "UPDATE Invoice SET Smoothie_quantity = " + std::to_string(quantity) + ", Invoice_price =" + std::to_string(price) + " Where Invoice_id = " + std::to_string(row) + ";";
+
+	int rc = sqlite3_prepare_v2(db, query.c_str(), -1, &res, NULL);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return;
+	}
+
+	sqlite3_step(res);
+	sqlite3_finalize(res);
+
+}
+
+int makeSmoothie(sqlite3 *db, int InvoiceID)
+{
+	std::string query = "INSERT INTO Smoothies(Invoice_id,Fruit_1,Fruit_2,Liquid,Sell_price)";
+	query += "VALUES (@ID,@F1,@F2,@Liquid,@SP )";
+	sqlite3_stmt *res;
+	int SP1, SP2, SP3, SPT;
+	int F1,F2,Liquid,ID;
+
+
+	std::cout << "Choose your first fruit" << std::endl;
+	F1 = viewFruit(db);
+	SP1 = getPrice(db, F1);
+
+	std::cout << "Choose your second fruit" << std::endl;
+	F2 = viewFruit(db);
+	SP2 = getPrice(db, F2);
+
+	std::cout << "Choose your Liquid" << std::endl;
+	Liquid = viewLiquid(db);
+	SP3 = getPrice(db, Liquid);
+	SPT = SP1 + SP2 + SP3;
+
+	int rc = sqlite3_prepare_v2(db, query.c_str(), -1, &res, NULL);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(res, sqlite3_bind_parameter_index(res, "@ID"), InvoiceID);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(res, sqlite3_bind_parameter_index(res, "@F1"),F1);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(res, sqlite3_bind_parameter_index(res, "@F2"), F2);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(res, sqlite3_bind_parameter_index(res, "@Liquid"), Liquid);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	rc = sqlite3_bind_int(res, sqlite3_bind_parameter_index(res, "@SP"), SPT);
+	if (rc != SQLITE_OK)
+	{
+		sqlite3_finalize(res);
+		std::cout << "unable to insert invoice." << sqlite3_errmsg(db) << std::endl;
+		std::cout << query << std::endl;
+		return 0;
+	}
+
+	sqlite3_step(res);
+	sqlite3_finalize(res);
+
+	return SPT;
+}
+
+int viewLiquid(sqlite3 *db)
+{
+	std::string query = "SELECT Raw_Material_id, Material_name, sell_price FROM Raw_Materials WHERE Distributor_id = 4 OR Distributor_id = 1 ;";
+	sqlite3_stmt *pRes;
+	std::string m_strLastError;
+	int choice;
+	int i = 0, totalRows;
+
+	if (sqlite3_prepare_v2(db, query.c_str(), -1, &pRes, NULL) != SQLITE_OK)
+	{
+		m_strLastError = sqlite3_errmsg(db);
+		sqlite3_finalize(pRes);
+		std::cout << "There was an error: " << m_strLastError << std::endl;
+		return 0;
+	}
+	else
+	{
+		int columnCount = sqlite3_column_count(pRes);
+		std::cout << std::left;
+		int res;
+		do
+		{
+			res = sqlite3_step(pRes);
+			i++;
+
+		} while (res == SQLITE_ROW);
+		totalRows = i - 1;
+		sqlite3_reset(pRes);
+
+		i = 0;
+		printPages(pRes, totalRows, i);
+		std::cin >> choice;
+		while ((choice > 8 && choice < 6) || !choice)
+		{
+			clearInput();
+			std::cout << "Invalid input" << std::endl;
+			std::cin >> choice;
+		}
+
+		sqlite3_reset(pRes);
+	}
+	return choice;
+}
+
+int viewFruit(sqlite3 *db)
+{
+	std::string query = "SELECT Raw_Material_id, Material_name, sell_price FROM Raw_Materials WHERE distributor_id <> 4 AND distributor_id <> 1";
+	sqlite3_stmt *pRes;
+	std::string m_strLastError;
+	int i = 0, totalRows, choice;
+
+	if (sqlite3_prepare_v2(db, query.c_str(), -1, &pRes, NULL) != SQLITE_OK)
+	{
+		m_strLastError = sqlite3_errmsg(db);
+		sqlite3_finalize(pRes);
+		std::cout << "There was an error: " << m_strLastError << std::endl;
+		return 0;
+	}
+	else
+	{
+		int columnCount = sqlite3_column_count(pRes);
+		std::cout << std::left;
+		int res;
+		do
+		{
+			res = sqlite3_step(pRes);
+			i++;
+
+		} while (res == SQLITE_ROW);
+		totalRows = i - 1;
+		sqlite3_reset(pRes);
+
+		i = 0;
+		printPages(pRes, totalRows, i);
+		std::cin >> choice;
+		while ((choice > 5 && choice < 1) || !choice)
+		{
+			clearInput();
+			std::cout << "Invalid input" << std::endl;
+			std::cin >> choice;
+		}
+		sqlite3_reset(pRes);
+	}
+	for (int i = 0; i < choice; i++)
+	{
+		sqlite3_step(pRes);
+	}
+
+	
+	return choice;
+}
+
+int getPrice(sqlite3 *db, int item)
+{
+	std::string query = "SELECT sell_price FROM Raw_Materials;";
+	sqlite3_stmt *pRes;
+	std::string m_strLastError, price;
+	int i = 0, totalRows;
+
+	if (sqlite3_prepare_v2(db, query.c_str(), -1, &pRes, NULL) != SQLITE_OK)
+	{
+		m_strLastError = sqlite3_errmsg(db);
+		sqlite3_finalize(pRes);
+		std::cout << "There was an error: " << m_strLastError << std::endl;
+		return 0;
+	}
+	
+	for (int i = 0; i < item; i++)
+	{
+		sqlite3_step(pRes);
+	}
+
+	price = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 0));
+	return std::stoi(price);
+}
+
+int startTransaction(sqlite3 *db)
+{
+	std::string query = "begin transaction";
+	int rc = sqlite3_exec(db, query.c_str(), NULL, NULL, NULL);
+	if (rc != SQLITE_OK)
+	{
+		std::cout << "There was an error - starting transaction(52): " << sqlite3_errmsg(db) << std::endl;
+		return rc;
+	}
+	return SQLITE_OK;
+}
+
+int rollback(sqlite3 *db)
+{
+	std::string query = "rollback";
+	int rc = sqlite3_exec(db, query.c_str(), NULL, NULL, NULL);
+	if (rc != SQLITE_OK)
+	{
+		std::cout << "There was an error - rolling back the transaction: " << sqlite3_errmsg(db) << std::endl;
+		// rollback(db);
+		return rc;
+	}
+	return SQLITE_OK;
+}
+
+int commit(sqlite3 *db)
+{
+	std::string query = "commit";
+	int rc = sqlite3_exec(db, query.c_str(), NULL, NULL, NULL);
+	if (rc != SQLITE_OK)
+	{
+		std::cout << "There was an error - committing transaction: " << sqlite3_errmsg(db) << std::endl;
+		rollback(db);
+		return rc;
+	}
+	return SQLITE_OK;
+}
+
+#pragma endregion
 
 #pragma region Inventory and suppliers
 
@@ -766,11 +1237,11 @@ void displayInv(sqlite3 *db)
 		}
 		sqlite3_reset(pRes);
 	}
-	viewFruit(db, choice);
+	viewMaterial(db, choice);
 	sqlite3_finalize(pRes);
 }
 
-void viewFruit(sqlite3 *db, int choice)
+void viewMaterial(sqlite3 *db, int choice)
 {
 	std::string query = "SELECT Raw_Materials.Raw_Material_id, Raw_Materials.Material_name, Raw_Materials.Material_quantity, Distributor.Distributor_name FROM Raw_Materials ";
 	query += "JOIN Distributor ON Raw_Materials.distributor_id = distributor.distributor_id";
@@ -855,11 +1326,11 @@ void displaySmoothies(sqlite3 *db)
 		while (choice == 0 || choice == -1)
 		{
 			if (i == 0)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page):" << std::endl;
+				std::cout << "Please choose the employee who helped you (enter 0 to go to the next page):" << std::endl;
 			else if (i + rowsPerPage < totalRows)
-				std::cout << "Please choose the customer you want to see rentals for (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the employee who helped you (enter 0 to go to the next page or -1 to go to the previous page):" << std::endl;
 			else
-				std::cout << "Please choose the customer you want to see rentals for (enter -1 to go to the previous page):" << std::endl;
+				std::cout << "Please choose the employee who helped you (enter -1 to go to the previous page):" << std::endl;
 			printSmoothiePages(pRes, rowsPerPage, i);
 			std::cin >> choice;
 
@@ -918,7 +1389,7 @@ void printSmoothiePages(sqlite3_stmt *res, int rowsPerPage, int startNum)
 	} while (i <= rowsPerPage);
 }
 
-std::string getFruit1(sqlite3 *db,int choice)
+std::string getFruit1(sqlite3 *db, int choice)
 {
 	std::string Fruit;
 	std::string query = "SELECT Smoothies.Smoothie_id, Raw_Materials.Material_name FROM Smoothies ";
@@ -933,14 +1404,15 @@ std::string getFruit1(sqlite3 *db,int choice)
 		return Fruit;
 	}
 
-	for (int i = 0; i < choice; i++){
+	for (int i = 0; i < choice; i++)
+	{
 		sqlite3_step(pRes);
 	}
 	Fruit = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 1));
 	return Fruit;
 }
 
-std::string getFruit2(sqlite3 *db,int choice)
+std::string getFruit2(sqlite3 *db, int choice)
 {
 	std::string Fruit;
 	std::string query = "SELECT Smoothies.Smoothie_id, Raw_Materials.Material_name FROM Smoothies ";
@@ -955,14 +1427,15 @@ std::string getFruit2(sqlite3 *db,int choice)
 		return Fruit;
 	}
 
-	for (int i = 0; i < choice; i++){
+	for (int i = 0; i < choice; i++)
+	{
 		sqlite3_step(pRes);
 	}
 	Fruit = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 1));
 	return Fruit;
 }
 
-std::string getLiquid(sqlite3 *db,int choice)
+std::string getLiquid(sqlite3 *db, int choice)
 {
 	std::string Liquid;
 	std::string query = "SELECT Smoothies.Smoothie_id, Raw_Materials.Material_name FROM Smoothies ";
@@ -977,7 +1450,8 @@ std::string getLiquid(sqlite3 *db,int choice)
 		return Liquid;
 	}
 
-	for (int i = 0; i < choice; i++){
+	for (int i = 0; i < choice; i++)
+	{
 		sqlite3_step(pRes);
 	}
 	Liquid = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 1));
@@ -989,7 +1463,7 @@ void viewSmoothie(sqlite3 *db, int choice)
 	std::string query = "SELECT Smoothies.Smoothie_id, Smoothies.sell_price FROM Smoothies ";
 	sqlite3_stmt *pRes;
 	std::string m_strLastError;
-	std::string id,F1,F2,Liquid,sellPrice;
+	std::string id, F1, F2, Liquid, sellPrice;
 
 	if (sqlite3_prepare_v2(db, query.c_str(), -1, &pRes, NULL) != SQLITE_OK)
 	{
@@ -999,14 +1473,15 @@ void viewSmoothie(sqlite3 *db, int choice)
 		return;
 	}
 
-	for (int i = 0; i < choice; i++){
+	for (int i = 0; i < choice; i++)
+	{
 		sqlite3_step(pRes);
 	}
-		
+
 	id = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 0));
-	F1 = getFruit1(db,choice);
-	F2 = getFruit2(db,choice);
-	Liquid = getLiquid(db,choice);
+	F1 = getFruit1(db, choice);
+	F2 = getFruit2(db, choice);
+	Liquid = getLiquid(db, choice);
 	sellPrice = reinterpret_cast<const char *>(sqlite3_column_text(pRes, 1));
 
 	std::cout << " " << std::endl;
